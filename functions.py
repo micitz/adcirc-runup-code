@@ -6,9 +6,15 @@ Michael Itzkin, 2/21/2018
 
 import netCDF4 as nc
 import numpy as np
-import csv 
 import datetime as dt
-import time
+from bs4 import BeautifulSoup
+import requests
+
+
+def listFD(url):
+    page = requests.get(url).text
+    soup = BeautifulSoup(page, 'html.parser')
+    return [url + '/' + node.get('href') for node in soup.find_all('a')]
 
 
 def find_nearest(array, value):
@@ -345,7 +351,7 @@ def daterange(start_date, end_date):
      #n is adding days 
 
 
-def adcirc_full_data_download(date):
+def adcirc_full_data_download_OLD(date):
     """
     Go into the OpenDAP server and get date for the specified date
     """
@@ -376,6 +382,60 @@ def adcirc_full_data_download(date):
     hs_url = url_1 + date + url_2
     z_url = url_1 + date + url_4
     # add new url for new variable here
+
+    try:
+        # Return the dataset from the netCDF file
+        hs_data = nc.Dataset(hs_url, 'r')
+        tp_data = nc.Dataset(tp_url, 'r')
+        z_data = nc.Dataset(z_url, 'r')
+        status = "good"
+        # add in new dataset here
+
+    except IOError:
+        hs_data = 0
+        tp_data = 0
+        z_data = 0
+        status = "fail"
+        # add new variable here and set equal to 0
+
+    return hs_data, tp_data, z_data, status
+
+
+def adcirc_full_data_download(date):
+    """
+    Go into the OpenDAP server and get date for the specified date
+
+    url_1: Generic path to data
+    url_2: Significant wave heights
+    url_3: Peak periods
+    url_4: Depths
+    """
+
+    url_1 = 'http://opendap.renci.org:1935/thredds/dodsC/daily/nam/'
+    directory_url = url_1 + date + '/catalog.html'
+
+    # Check if an nc6b grid exists for the date, if so use it.
+    # You can add more urls to these lists!
+    for file in listFD(directory_url):
+        if file.find('nc6b') != -1:
+            url_2 = '/nc6b/hatteras.renci.org/dailyv6c/namforecast/swan_HS.63.nc'
+            url_3 = '/nc6b/hatteras.renci.org/dailyv6c/namforecast/swan_TPS.63.nc'
+            url_4 = '/nc6b/hatteras.renci.org/dailyv6c/namforecast/fort.63.nc'
+            grid = 'nc6b'
+            break
+        else:
+            url_2 = '/hsofs/hatteras.renci.org/namhsofs/namforecast/swan_HS.63.nc'
+            url_3 = '/hsofs/hatteras.renci.org/namhsofs/namforecast/swan_TPS.63.nc'
+            url_4 = '/hsofs/hatteras.renci.org/namhsofs/namforecast/fort.63.nc'
+            grid = 'hsofs'
+
+    # Print out which grid is being used
+    print('Using %s grid\n' % grid)
+
+    tp_url = url_1 + date + url_3
+    hs_url = url_1 + date + url_2
+    z_url = url_1 + date + url_4
+    # Can add more data here, make sure the addresses are correct
 
     try:
         # Return the dataset from the netCDF file
