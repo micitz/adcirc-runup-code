@@ -44,7 +44,7 @@ with open(date_file, 'w', newline='') as adcirc_file:
         # date range, this program will try to download the data for
         # every hour in this list. You can try adding new times;
         # Separate the values with a comma and put them in quotes
-        hours=['00', '12']
+        hours = ['00', '12']
         for hour in hours:
 
             # Add the hour to the date string.
@@ -54,9 +54,10 @@ with open(date_file, 'w', newline='') as adcirc_file:
             # Download the data
             hs_data, tp_data, z_data, status = func.adcirc_data_download(date)
             
-            if status=='good':
+            if status == 'good':
+
                 # Print the date and status to the console
-                print('Current Date: %s (Status = %s)' %(date, status))
+                print('Current Date: %s (Status = %s)' % (date, status))
         
                 x = hs_data['x']
                 y = hs_data['y']
@@ -84,7 +85,7 @@ with open(date_file, 'w', newline='') as adcirc_file:
 
                 #find 20m contour nodes, 20m is standard 
                 contour = 20 #this value can be changed 
-                use_depths, use_indexes = func.deep_water_nodes(depth,contour)
+                use_depths, use_indexes = func.deep_water_nodes(depth, contour)
                 max_Hs = max_Hs[use_indexes]
                 swan_TPS_max = swan_TPS_max[use_indexes]
                 max_elev = elev[use_indexes]

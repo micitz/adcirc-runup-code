@@ -9,9 +9,15 @@ import numpy as np
 import datetime as dt
 from bs4 import BeautifulSoup
 import requests
+import haversine
 
 
 def listFD(url):
+    """
+    Return folders from a URL
+
+    https://stackoverflow.com/questions/11023530/python-to-list-http-files-and-directories
+    """
     page = requests.get(url).text
     soup = BeautifulSoup(page, 'html.parser')
     return [url + '/' + node.get('href') for node in soup.find_all('a')]
@@ -112,10 +118,10 @@ def load_bounding_box():
     Loads the bounding box variables
     """
 
-    bottom_lat = 34.206229
-    upper_lat = 35.132368
+    bottom_lat = 32.942688  # 34.206229
+    upper_lat = 35.377735  # 35.132368
     left_lon = -78.148505
-    right_lon = -75.245367
+    right_lon = -74.469147  # -75.245367
     #this can be changed if add onslow-make sure at 20m countour 
     #don't forget the negative sign 
     return bottom_lat, upper_lat, left_lon, right_lon
@@ -207,7 +213,7 @@ def x_y_refine(x, y, start, end):
     return x[start:end], y[start:end]
 
 
-def deep_water_nodes(depths,contour):
+def deep_water_nodes(depths, contour):
     """ 
     Find nodes nearest to the indicated countour 
     """
@@ -291,7 +297,7 @@ def finding_well_points(use_indexes, x, y):
     # This list store the general shoreline orientation of the beach where the wells
     # are located. Make sure that this list is equal in number of items as well_long and
     # well_lat. The values should correspond to the wells (i.e; if the first well_lon and
-    # well_lat is for Shackleford than the first orientation should be "EW")
+    # well_lat is for Shackleford than the first orientation should be "DIAG", "NS" for Core)
     # CAN BE CHANGED !!
     orientation = ['DIAG', 'NS']
 
@@ -452,4 +458,58 @@ def adcirc_full_data_download(date):
         status = "fail"
         # add new variable here and set equal to 0
 
-    return hs_data, tp_data, z_data, status
+    return hs_data, tp_data, z_data, status, grid
+
+
+def hsofs_node_find(x, y):
+    """
+    Find the appropiate nodes in the hsofs grid using the locations of the nodes used
+    from the nc6b grid. Similar to the finding_well_points function, you'll have to
+    enter in the general shoreline orientation of the well locations (DIAG, NS, EW)
+    """
+
+    # Store the locations of the nc6b nodes used in a dictionary (Python data structure type)
+    # Add more locations using the format: 'Location': [lat, lon],
+    # Don't forget the comma at the end!
+    nc6b_nodes = {
+        'Shackleford': [-76.6601, 34.482],
+        'South Core': [-76.10741, 34.66574],
+    }
+
+    # Loop through the locations in the dictionaries
+    nodes_used = []
+    for key in nc6b_nodes:
+
+        # Set the lat/lon of the current nc6b location as a tuple (Python data structure type)
+        # of (lat, lon). The haversine function in Python uses lat, lon while all the other
+        # methods used here are lon, lat
+        curr_loc = (float(nc6b_nodes[key][1]), float(nc6b_nodes[key][0]))
+
+        # Initialize the min_dist variable with some number. It doesn't matter what the
+        # number is, it just has to be very big so that there is at least one node in the
+        # hsofs mesh that is closer to the nc6b node location than this number. It will get
+        # overwritten in the for-loop below immediately.
+        min_dist = 1000000
+
+        # Loop through the nodes in the box
+        for i in range(len(x)):
+
+            # Set a tuple of the (lat, lon) of the current hsofs node being looked at
+            search_location = (float(y[i]), float(x[i]))
+
+            # Use the haversine function to calculate the distance between the nc6b node
+            # location and the current node being looked at. The function defaults to calculating
+            # distance in miles, by setting miles=False it calculates in kilometers.
+            dist = haversine.haversine(search_location, curr_loc, miles=False)
+
+            if dist < min_dist:
+                # If the distance calculated above is less than the current value
+                # of min_dist, set min_dist to the current value of dist. Store the
+                # index of the current hsofs node too.
+                min_dist = dist
+                index = i
+
+        # Append the index of the closest hsofs node to the nodes_used list
+        nodes_used.append(index)
+
+    return nodes_used

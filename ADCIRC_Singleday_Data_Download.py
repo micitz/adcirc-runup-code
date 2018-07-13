@@ -40,7 +40,7 @@ with open(date_file_fname, 'w+') as adcirc_file:
     bottom_lat, upper_lat, left_lon, right_lon = func.load_bounding_box()
 
     # Download the data
-    hs_data, tp_data, z_data, status = func.adcirc_full_data_download(date)
+    hs_data, tp_data, z_data, status, grid = func.adcirc_full_data_download(date)
 
     if status == 'good':
 
@@ -85,15 +85,17 @@ with open(date_file_fname, 'w+') as adcirc_file:
                 # If "IndexError: invalid index to scalar variable." then try removing the "[t]"
                 #   since not all variables (i.e; Depth) do not change with time
 
-            # Find the nodes at the defined contour. This can be changed but should be kept at 20
-            contour = 20
-            use_depths, use_indexes = func.deep_water_nodes(depth, contour)
-
-            Hs = Hs[use_indexes]
-            swan_TPS = swan_TPS[use_indexes]
-            elev = elev[use_indexes]
-            nodes_used = func.finding_well_points(use_indexes, x, y)
-            # Add new variable here-just copy and change variable names
+            # Find the nodes at the defined contour. This can be changed but should be kept at -20
+            contour = -20
+            if grid == 'nc6b':
+                contour *= -1
+                use_depths, use_indexes = func.deep_water_nodes(depth, contour)
+                Hs = Hs[use_indexes]
+                swan_TPS = swan_TPS[use_indexes]
+                elev = elev[use_indexes]
+                nodes_used = func.finding_well_points(use_indexes, x, y)
+            elif grid == 'hsofs':
+                nodes_used = func.hsofs_node_find(x, y)
 
             # Every time step is one hour. Here, the date is adjusted
             # using the dt.timedelta function by setting the "t" value
@@ -104,7 +106,7 @@ with open(date_file_fname, 'w+') as adcirc_file:
             if t != 0:
                 time_step = dt.timedelta(hours=1)
                 date = dt.datetime.strptime(date, '%Y%m%d%H')
-                date += (time_step)
+                date += time_step
                 date = date.strftime('%Y%m%d%H')
 
             line = []
