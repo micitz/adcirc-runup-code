@@ -32,7 +32,7 @@ with open(date_file_fname, 'w+') as adcirc_file:
     # Write a header row for the .csv file. The "depth", "Max Hs",
     # and "Tp" columns are repeated for every well but the header will
     # only print for the first one
-    writer.writerow(['Date', 'Depth', 'Elevation', 'Max Hs', 'Tp', 'Node Lon', 'Node Lat'])
+    writer.writerow(['Date', 'Depth', 'Elevation', 'Max Hs', 'Tp', 'Deep Node Lon', 'Deep Node Lat'])
 
     # Load the bounding box. You can change the bounding box by
     # going to this function in "functions.py" and changing the
@@ -44,9 +44,18 @@ with open(date_file_fname, 'w+') as adcirc_file:
 
     if status == 'good':
 
+        # Before downloading the forecast data, check if a nowcast
+        # exists for the current date. If so, collect the nowcast
+        # data first before collecting the forecast data
+        if func.find_nowcast(date):
+            func.download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writer, bad_dates_log)
+
         x = hs_data['x']
         y = hs_data['y']
         time = hs_data['time']
+
+        # Setup the time
+        base_time_dt = func.get_model_base_time(hs_data)
 
         # Narrow down the lat/lon
         start, end = func.find_search_indexes(left_lon, right_lon, x)
@@ -56,8 +65,11 @@ with open(date_file_fname, 'w+') as adcirc_file:
         # variable at the current time
         for t in range(len(time)):
 
+            # Calculate the "real" time from the model
+            real_time, real_time_str = func.get_real_time(base_time_dt, time[t])
+
             # Print the current time step being worked on
-            print('Currently working on time step %d of %d' %(t+1, len(time)))
+            print('Currently working on forecast time step %d of %d (Real time: %s)' % (t+1, len(time), real_time))
 
             # Download the appropriate Hs,TPS, depth values.
             # The indexes where the netCDF is using the "nc6b" url
@@ -86,16 +98,22 @@ with open(date_file_fname, 'w+') as adcirc_file:
                 #   since not all variables (i.e; Depth) do not change with time
 
             # Find the nodes at the defined contour. This can be changed but should be kept at -20
-            contour = -20
+            deep_contour = -20
+            mhw_contour = 0.34
             if grid == 'nc6b':
-                contour *= -1
-                use_depths, use_indexes = func.deep_water_nodes(depth, contour)
+
+                # Get deep water data
+                deep_contour *= -1
+                use_depths, use_indexes = func.deep_water_nodes(depth, deep_contour)
                 Hs = Hs[use_indexes]
                 swan_TPS = swan_TPS[use_indexes]
                 elev = elev[use_indexes]
-                nodes_used = func.finding_well_points(use_indexes, x, y)
+                deep_nodes_used = func.finding_well_points(use_indexes, x, y)
+
             elif grid == 'hsofs':
-                nodes_used = func.hsofs_node_find(x, y)
+
+                # Get deep water data
+                deep_nodes_used = func.hsofs_node_find(x, y)
 
             # Every time step is one hour. Here, the date is adjusted
             # using the dt.timedelta function by setting the "t" value
@@ -110,15 +128,15 @@ with open(date_file_fname, 'w+') as adcirc_file:
                 date = date.strftime('%Y%m%d%H')
 
             line = []
-            line.append(date)
-            for node in nodes_used:
-                line.append(depth[node])
-                line.append(elev[node])
-                line.append(Hs[node])
-                line.append(swan_TPS[node])
+            line.append(real_time_str)
+            for deep_node in deep_nodes_used:
+                line.append(depth[deep_node])
+                line.append(elev[deep_node])
+                line.append(Hs[deep_node])
+                line.append(swan_TPS[deep_node])
                 # Add new variable here as "line.append(___[node])"
-                line.append(x[node])
-                line.append(y[node])
+                line.append(x[deep_node])
+                line.append(y[deep_node])
 
             writer.writerow(line)
 

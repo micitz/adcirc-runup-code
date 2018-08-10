@@ -417,8 +417,9 @@ def adcirc_full_data_download(date):
     url_4: Depths
     """
 
-    url_1 = 'http://opendap.renci.org:1935/thredds/dodsC/daily/nam/'
-    directory_url = url_1 + date + '/catalog.html'
+    catalog_url = 'http://tds.renci.org:8080/thredds/catalog/daily/nam/'
+    url_1 = 'http://tds.renci.org:8080/thredds/dodsC/daily/nam/'
+    directory_url = catalog_url + date + '/catalog.html'
 
     # Check if an nc6b grid exists for the date, if so use it.
     # You can add more urls to these lists!
@@ -513,3 +514,225 @@ def hsofs_node_find(x, y):
         nodes_used.append(index)
 
     return nodes_used
+
+
+def get_model_base_time(nc_file):
+    """
+    Retrieve the base date for the model run and return
+    it as a datetime object
+    """
+
+    # Loop through the attributes of the time variable
+    # in the nc_file until "base_date" is found. Then
+    # store it as a string
+    for attr in nc_file['time'].ncattrs():
+        if attr == 'base_date':
+            base_time_str = getattr(nc_file['time'], attr)
+            break
+
+    # Convert the base_time string into a datetime object
+    dt_format = '%Y-%m-%d %H:%M:%S'
+    base_time_dt = dt.datetime.strptime(base_time_str, dt_format)
+
+    return base_time_dt
+
+
+def get_real_time(base_time, time):
+    """
+    Use the base time and the current time value to
+    determine the real time represented by the current
+    model time step
+
+    Returns the real time as a string and as a datetime object
+    """
+    real_time_val = time
+    real_time_step = dt.timedelta(seconds=real_time_val)
+    real_time = base_time + real_time_step
+    real_time_str = real_time.strftime('%Y-%m-%d %H:%M:%S')
+
+    return real_time, real_time_str
+
+
+def find_nowcast(date):
+    """
+    See if a nowcast run exists for the current data and return a
+    "True"/"False". This uses the same listFD function that checks
+    for an nc6b grid in the adcirc_full_data_download() function but
+    here a different URL is passed to listFD() which allows it to check
+    if a folder named "nowcast" exists
+    """
+
+    gen_url = 'http://tds.renci.org:8080/thredds/catalog/daily/nam/'
+    casts_url = gen_url + date + '/hsofs/hatteras.renci.org/namhsofs/catalog.html'
+
+    for cast in listFD(casts_url):
+        if cast.find('nowcast') != -1:
+            res = True
+            break
+        else:
+            res = False
+
+    return res
+
+
+def adcirc_full_nowcast_data_download(date):
+    """
+    Go into the OpenDAP server and get date for the specified date
+
+    url_1: Generic path to data
+    url_2: Significant wave heights
+    url_3: Peak periods
+    url_4: Depths
+
+    8/10/18: All nowcasts are on the hsofs grid so this function will just
+             assume an hsofs grid
+    """
+
+    url_1 = 'http://tds.renci.org:8080/thredds/dodsC/daily/nam/'
+    url_2 = '/hsofs/hatteras.renci.org/namhsofs/nowcast/swan_HS.63.nc'
+    url_3 = '/hsofs/hatteras.renci.org/namhsofs/nowcast/swan_TPS.63.nc'
+    url_4 = '/hsofs/hatteras.renci.org/namhsofs/nowcast/fort.63.nc'
+    grid = 'hsofs'
+
+    # Print out which grid is being used
+    print('Using %s grid for nowcast data\n' % grid)
+
+    tp_url = url_1 + date + url_3
+    hs_url = url_1 + date + url_2
+    z_url = url_1 + date + url_4
+    # Can add more data here, make sure the addresses are correct
+
+    try:
+        # Return the dataset from the netCDF file
+        hs_data = nc.Dataset(hs_url, 'r')
+        tp_data = nc.Dataset(tp_url, 'r')
+        z_data = nc.Dataset(z_url, 'r')
+        status = "good"
+        # add in new dataset here
+
+    except IOError:
+        hs_data = 0
+        tp_data = 0
+        z_data = 0
+        status = "fail"
+        # add new variable here and set equal to 0
+
+    return hs_data, tp_data, z_data, status, grid
+
+
+def download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writer, bad_dates_log):
+    """
+    If a nowcast exists for the current date, this function will download
+    all the nowcast data first before the main program runs. This function
+    is essentially the main program with nowcast URLs.
+
+    Any variable in the main program that needs a "now" version is passed to
+    this function this way variable names could technically be shared without
+    causing an issue
+    """
+
+    # Download the data
+    hs_data, tp_data, z_data, status, grid = adcirc_full_nowcast_data_download(date)
+
+    if status == 'good':
+
+        x = hs_data['x']
+        y = hs_data['y']
+        time = hs_data['time']
+
+        # Setup the time
+        base_time_dt = get_model_base_time(hs_data)
+
+        # Narrow down the lat/lon
+        start, end = find_search_indexes(left_lon, right_lon, x)
+        x, y = x_y_refine(x, y, start, end)
+
+        # Loop through every time step and record the value of that
+        # variable at the current time
+        for t in range(len(time)):
+
+            # Calculate the "real" time from the model
+            real_time, real_time_str = get_real_time(base_time_dt, time[t])
+
+            # Print the current time step being worked on
+            print('Currently working on nowcast time step %d of %d (Real time: %s)' % (t + 1, len(time), real_time))
+
+            # Download the appropriate Hs,TPS, depth values.
+            # The indexes where the netCDF is using the "nc6b" url
+            # path returns the start and end indexes in reverse order
+            # so swap them here.
+            # In the multiday script, the data can be thought of as
+            # a 2D vector (i.e; 1x*length*); Here, the data can be thought of as a matrix
+            # where there is a row for every time step and a column for every node. So, to
+            # find the right points here, not only are the nodes indexed "[start:end]" but
+            # the time is also indexed as "[t]"
+            if start > end:
+                Hs = hs_data['swan_HS'][t][end:start]
+                swan_TPS = tp_data['swan_TPS'][t][end:start]
+                depth = hs_data['depth'][end:start]
+                elev = z_data['zeta'][t][end:start]
+                # Put in vew variable here "[t][end:start]"
+                # If "IndexError: invalid index to scalar variable." then try removing the "[t]"
+                #   since not all variables (i.e; Depth) do not change with time
+            elif start <= end:
+                Hs = hs_data['swan_HS'][t][start:end]
+                swan_TPS = tp_data['swan_TPS'][t][start:end]
+                depth = hs_data['depth'][start:end]
+                elev = z_data['zeta'][t][start:end]
+                # Put in new variable here "[t][start:end]"
+                # If "IndexError: invalid index to scalar variable." then try removing the "[t]"
+                #   since not all variables (i.e; Depth) do not change with time
+
+            # Find the nodes at the defined contour. This can be changed but should be kept at -20
+            deep_contour = -20
+            mhw_contour = 0.34
+            if grid == 'nc6b':
+
+                # Get deep water data
+                deep_contour *= -1
+                use_depths, use_indexes = deep_water_nodes(depth, deep_contour)
+                Hs = Hs[use_indexes]
+                swan_TPS = swan_TPS[use_indexes]
+                elev = elev[use_indexes]
+                deep_nodes_used = finding_well_points(use_indexes, x, y)
+
+            elif grid == 'hsofs':
+
+                # Get deep water data
+                deep_nodes_used = hsofs_node_find(x, y)
+
+            # Every time step is one hour. Here, the date is adjusted
+            # using the dt.timedelta function by setting the "t" value
+            # being looped over to hours and then adding it to the date
+            # The date is briefly converted back into a datetime object
+            # to do this and then reconverted back into a string. The
+            # if-statement (if t != 0) makes sure that the time is correct
+            if t != 0:
+                time_step = dt.timedelta(hours=1)
+                date = dt.datetime.strptime(date, '%Y%m%d%H')
+                date += time_step
+                date = date.strftime('%Y%m%d%H')
+
+            line = []
+            line.append(real_time_str)
+            for deep_node in deep_nodes_used:
+                line.append(depth[deep_node])
+                line.append(elev[deep_node])
+                line.append(Hs[deep_node])
+                line.append(swan_TPS[deep_node])
+                # Add new variable here as "line.append(___[node])"
+                line.append(x[deep_node])
+                line.append(y[deep_node])
+
+            writer.writerow(line)
+
+    elif status != 'good':
+        # Print the current date and status to the console
+        print('ERROR: Could not load date for %s\r\n' % (date))
+        log_line = '\r\n' + date
+        bad_dates_log.write(log_line)
+        print('Date stored in bad_dates_log.txt\r\n')
+
+        # Clear the hour from the date string
+        # Return to: yyyymmdd
+    date = date[:-2]
