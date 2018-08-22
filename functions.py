@@ -10,6 +10,8 @@ import datetime as dt
 from bs4 import BeautifulSoup
 import requests
 import haversine
+import os
+import time
 
 
 def listFD(url):
@@ -53,9 +55,12 @@ def set_date():
     Hour = input('Enter the hour (hh): ')
     date = dt.datetime(int(Year), int(Month), int(Day), int(Hour))
     date = date.strftime('%Y%m%d%H')
+    print('---------------------')
+    use_gmt = bool(input('Use GMT (T) or EST (F): '))
+    use_navd88 = bool(input('Use NAVD88 (T) or MSL (F): '))
     print('---------------------\r\n')
 
-    return date
+    return date, use_gmt, use_navd88
 
 
 def finish_prompt(status, date_file_fname, bad_dates_log, adcirc_file):
@@ -232,7 +237,7 @@ def deep_water_nodes(depths, contour):
 
     # Try looking for nodes within the +-0.5m range of the contour
     for i in range(1, len(depths)):
-        if (depths[i] > search_low and depths[i] < search_high):
+        if search_low < depths[i] < search_high:
             use_depths.append(depths[i])
             use_indexes.append(i)
 
@@ -240,7 +245,7 @@ def deep_water_nodes(depths, contour):
     # 20m contour, expand the contour range and try again
     if not use_depths:
         for i in range(1, len(depths)):
-            if depths[i] > (search_lower) and depths[i] < (search_higher):
+            if search_lower < depths[i] < search_higher:
                     use_depths.append(depths[i])
                     use_indexes.append(i)
 
@@ -350,6 +355,42 @@ def finding_well_points(use_indexes, x, y):
     return nodes_used
 
 
+def retrieve_data(grid, depth, contour, Hs, swan_TPS, elev, x, y):
+    """
+    Download Hs, Tp, depth, and elevation from the specified contour line
+    """
+
+    # Flip the depth sign if using the nc6b grid
+    if grid == 'nc6b':
+        contour *= -1
+
+    # Identify the correct nodes to use based on the contour
+    use_depths, use_indexes = deep_water_nodes(depth, contour)
+    print(use_depths)
+
+    # Get the data
+    Hs = Hs[use_indexes]
+    swan_TPS = swan_TPS[use_indexes]
+    depth = depth[use_indexes]
+    elev = elev[use_indexes]
+    lon = x[use_indexes]
+    lat = y[use_indexes]
+
+    # Identify the correct nodes within the use_indexes
+    nodes_used = finding_well_points(use_indexes, x, y)
+
+    # Get the data
+    Hs = Hs[nodes_used]
+    swan_TPS = swan_TPS[nodes_used]
+    depth = depth[nodes_used]
+    elev = elev[nodes_used]
+    lon = x[nodes_used]
+    lat = y[nodes_used]
+
+    # Return the data as a tuple
+    print(Hs, swan_TPS, depth, elev, lon, lat)
+
+
 def daterange(start_date, end_date):
     for n in range(int ((end_date - start_date).days)):
         yield start_date + dt.timedelta(n)
@@ -437,7 +478,7 @@ def adcirc_full_data_download(date):
             grid = 'hsofs'
 
     # Print out which grid is being used
-    print('Using %s grid\n' % grid)
+    print('Using %s grid for forecast data\n' % grid)
 
     tp_url = url_1 + date + url_3
     hs_url = url_1 + date + url_2
@@ -537,18 +578,62 @@ def get_model_base_time(nc_file):
     return base_time_dt
 
 
-def get_real_time(base_time, time):
+def dst_start_end(year):
+    """
+    Return the start and end times of daylight
+    savings based on the year being looked at
+    """
+
+    # Can add more years, just follow the pattern of the top
+    # year as "if year == ____:" and the rest as
+    # "elif year == ____:"
+    if year == 2016:
+        dst_start = dt.datetime(year, 3, 13, 2, 00)
+        dst_end = dt.datetime(year, 11, 6, 2, 00)
+    elif year == 2017:
+        dst_start = dt.datetime(year, 3, 12, 2, 00)
+        dst_end = dt.datetime(year, 11, 5, 2, 00)
+    elif year == 2018:
+        dst_start = dt.datetime(year, 3, 11, 2, 00)
+        dst_end = dt.datetime(year, 11, 4, 2, 00)
+
+    return dst_start, dst_end
+
+
+def get_real_time(base_time, time, gmt):
     """
     Use the base time and the current time value to
     determine the real time represented by the current
     model time step
 
+    The time in ADCIRC is in GMT, the optional GMT argument will convert the time to
+    Eastern time if set to true
+
     Returns the real time as a string and as a datetime object
     """
-    real_time_val = time
-    real_time_step = dt.timedelta(seconds=real_time_val)
+
+    # The time argument comes from ADCIRC, it is equal to the number
+    # of seconds since the reference time included in the metadata. Set
+    # it as the timestep and then add it to the base time to calculate
+    # the real time in GMT
+    real_time_step = dt.timedelta(seconds=time)
     real_time = base_time + real_time_step
     real_time_str = real_time.strftime('%Y-%m-%d %H:%M:%S')
+
+    # If gmt is set to false than the time will convert to EDT
+    if ~gmt:
+
+        # Check if the date is during daylight savings time
+        use_year = int(real_time_str[0:4])  # Get the year
+        dst_start, dst_end = dst_start_end(use_year)
+        if (dst_start < real_time < dst_end):
+            gmt_adjust = dt.timedelta(hours=4)
+            real_time = real_time - gmt_adjust
+            real_time_str = real_time.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            gmt_adjust = dt.timedelta(hours=5)
+            real_time = real_time - gmt_adjust
+            real_time_str = real_time.strftime('%Y-%m-%d %H:%M:%S')
 
     return real_time, real_time_str
 
@@ -620,7 +705,7 @@ def adcirc_full_nowcast_data_download(date):
     return hs_data, tp_data, z_data, status, grid
 
 
-def download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writer, bad_dates_log):
+def download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writer, bad_dates_log, use_gmt, use_navd88):
     """
     If a nowcast exists for the current date, this function will download
     all the nowcast data first before the main program runs. This function
@@ -652,10 +737,15 @@ def download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writ
         for t in range(len(time)):
 
             # Calculate the "real" time from the model
-            real_time, real_time_str = get_real_time(base_time_dt, time[t])
+            real_time, real_time_str = get_real_time(base_time_dt, time[t], gmt=use_gmt)
 
             # Print the current time step being worked on
-            print('Currently working on nowcast time step %d of %d (Real time: %s)' % (t + 1, len(time), real_time))
+            if use_gmt:
+                print('Currently working on nowcast time step %d of %d (Real time: %s GMT)' %
+                      (t + 1, len(time), real_time))
+            else:
+                print('Currently working on nowcast time step %d of %d (Real time: %s EST)' %
+                      (t + 1, len(time), real_time))
 
             # Download the appropriate Hs,TPS, depth values.
             # The indexes where the netCDF is using the "nc6b" url
@@ -716,23 +806,36 @@ def download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writ
             line = []
             line.append(real_time_str)
             for deep_node in deep_nodes_used:
-                line.append(depth[deep_node])
-                line.append(elev[deep_node])
-                line.append(Hs[deep_node])
-                line.append(swan_TPS[deep_node])
-                # Add new variable here as "line.append(___[node])"
-                line.append(x[deep_node])
-                line.append(y[deep_node])
+
+                # Convert the values to NAVD88 if desired
+                msl_to_navd88 = 0.118  # Meters
+                if use_navd88:
+                    line.append(depth[deep_node] + msl_to_navd88)
+                    line.append(elev[deep_node] + msl_to_navd88)
+                    line.append(Hs[deep_node] + msl_to_navd88)
+                    line.append(swan_TPS[deep_node])
+                    # Add new variable here as "line.append(___[node])"
+                    line.append(x[deep_node])
+                    line.append(y[deep_node])
+                else:
+                    line.append(depth[deep_node])
+                    line.append(elev[deep_node])
+                    line.append(Hs[deep_node])
+                    line.append(swan_TPS[deep_node])
+                    # Add new variable here as "line.append(___[node])"
+                    line.append(x[deep_node])
+                    line.append(y[deep_node])
 
             writer.writerow(line)
 
     elif status != 'good':
         # Print the current date and status to the console
-        print('ERROR: Could not load date for %s\r\n' % (date))
-        log_line = '\r\n' + date
+        print('ERROR: Could not load date for %s\r\n' % date)
+        log_line = '\r\n' + date + '\tCould not load nowcast data'
         bad_dates_log.write(log_line)
         print('Date stored in bad_dates_log.txt\r\n')
 
-        # Clear the hour from the date string
-        # Return to: yyyymmdd
+    # Clear the hour from the date string
+    # Return to: yyyymmdd
     date = date[:-2]
+

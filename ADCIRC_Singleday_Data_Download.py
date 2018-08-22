@@ -9,12 +9,13 @@ import functions as func
 import datetime as dt
 import csv
 
+
 # Print out an intro to the console
 func.intro_prompt()
 
 # Set the date to retrieve data for. This is set through the command line as
 # user input values. Follow the prompts onscreen
-date = func.set_date()
+date, use_gmt, use_navd88 = func.set_date()
 
 # Keep a running log of any date that didn't work. To do this, open up the
 # "bad_dates_log.txt" file in append mode (note that the open function has a "a"
@@ -42,13 +43,14 @@ with open(date_file_fname, 'w+') as adcirc_file:
     # Download the data
     hs_data, tp_data, z_data, status, grid = func.adcirc_full_data_download(date)
 
-    if status == 'good':
+    # Before downloading the forecast data, check if a nowcast
+    # exists for the current date. If so, collect the nowcast
+    # data first before collecting the forecast data
+    if func.find_nowcast(date):
+        func.download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writer,
+                                   bad_dates_log, use_gmt, use_navd88)
 
-        # Before downloading the forecast data, check if a nowcast
-        # exists for the current date. If so, collect the nowcast
-        # data first before collecting the forecast data
-        if func.find_nowcast(date):
-            func.download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writer, bad_dates_log)
+    if status == 'good':
 
         x = hs_data['x']
         y = hs_data['y']
@@ -66,10 +68,16 @@ with open(date_file_fname, 'w+') as adcirc_file:
         for t in range(len(time)):
 
             # Calculate the "real" time from the model
-            real_time, real_time_str = func.get_real_time(base_time_dt, time[t])
+            real_time, real_time_str = func.get_real_time(base_time_dt, time[t], use_gmt)
 
             # Print the current time step being worked on
-            print('Currently working on forecast time step %d of %d (Real time: %s)' % (t+1, len(time), real_time))
+            # Print the current time step being worked on
+            if use_gmt:
+                print('Currently working on nowcast time step %d of %d (Real time: %s GMT)' %
+                      (t + 1, len(time), real_time))
+            else:
+                print('Currently working on nowcast time step %d of %d (Real time: %s EST)' %
+                      (t + 1, len(time), real_time))
 
             # Download the appropriate Hs,TPS, depth values.
             # The indexes where the netCDF is using the "nc6b" url
@@ -97,9 +105,10 @@ with open(date_file_fname, 'w+') as adcirc_file:
                 # If "IndexError: invalid index to scalar variable." then try removing the "[t]"
                 #   since not all variables (i.e; Depth) do not change with time
 
-            # Find the nodes at the defined contour. This can be changed but should be kept at -20
-            deep_contour = -20
-            mhw_contour = 0.34
+            # Find the nodes at the defined contour. These can be changed. Technically mhw should be 0.34 not
+            # -0.34 but the contour function will still search in that range, the negative sign works better with it
+            deep_contour = -20   # Default = -20
+            mhw_contour = -0.34  # Default = -0.34
             if grid == 'nc6b':
 
                 # Get deep water data
@@ -115,35 +124,48 @@ with open(date_file_fname, 'w+') as adcirc_file:
                 # Get deep water data
                 deep_nodes_used = func.hsofs_node_find(x, y)
 
-            # Every time step is one hour. Here, the date is adjusted
-            # using the dt.timedelta function by setting the "t" value
-            # being looped over to hours and then adding it to the date
-            # The date is briefly converted back into a datetime object
-            # to do this and then reconverted back into a string. The
-            # if-statement (if t != 0) makes sure that the time is correct
+                # Every time step is one hour. Here, the date is adjusted
+                # using the dt.timedelta function by setting the "t" value
+                # being looped over to hours and then adding it to the date
+                # The date is briefly converted back into a datetime object
+                # to do this and then reconverted back into a string. The
+                # if-statement (if t != 0) makes sure that the time is correct
             if t != 0:
                 time_step = dt.timedelta(hours=1)
                 date = dt.datetime.strptime(date, '%Y%m%d%H')
                 date += time_step
                 date = date.strftime('%Y%m%d%H')
 
+
             line = []
             line.append(real_time_str)
             for deep_node in deep_nodes_used:
-                line.append(depth[deep_node])
-                line.append(elev[deep_node])
-                line.append(Hs[deep_node])
-                line.append(swan_TPS[deep_node])
-                # Add new variable here as "line.append(___[node])"
-                line.append(x[deep_node])
-                line.append(y[deep_node])
+
+                # Convert the values to NAVD88 if desired
+                msl_to_navd88 = 0.118  # Meters
+                if use_navd88:
+                    line.append(depth[deep_node] + msl_to_navd88)
+                    line.append(elev[deep_node] + msl_to_navd88)
+                    line.append(Hs[deep_node] + msl_to_navd88)
+                    line.append(swan_TPS[deep_node])
+                    # Add new variable here as "line.append(___[node])"
+                    line.append(x[deep_node])
+                    line.append(y[deep_node])
+                else:
+                    line.append(depth[deep_node])
+                    line.append(elev[deep_node])
+                    line.append(Hs[deep_node])
+                    line.append(swan_TPS[deep_node])
+                    # Add new variable here as "line.append(___[node])"
+                    line.append(x[deep_node])
+                    line.append(y[deep_node])
 
             writer.writerow(line)
 
     elif status != 'good':
         # Print the current date and status to the console
-        print('ERROR: Could not load date for %s\r\n' % (date))
-        log_line = '\r\n' + date
+        print('ERROR: Could not load date for %s\r\n' % date)
+        log_line = '\r\n' + date + '\tCould not load forecast data'
         bad_dates_log.write(log_line)
         print('Date stored in bad_dates_log.txt\r\n')
 
