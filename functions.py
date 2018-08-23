@@ -63,6 +63,40 @@ def set_date():
     return date, use_gmt, use_navd88
 
 
+def make_data_filename(date, gmt, navd, ext='csv'):
+    """
+    This function generates a filename to use
+    for the current run using the ADCIRC run date,
+    the time method (GMT/EST), and the vertical
+    datum (MSL, NAVD88).
+
+    The gmt and msl values should be passed as
+    bools (true/false)
+
+    The extension defaults to csv, this can be changed but
+    really shouldn't
+    """
+
+    # Set the time method
+    if gmt:
+        time_val = 'GMT'
+    else:
+        time_val = 'EST'
+
+    # Set the vertical datum
+    if navd:
+        vdatum = 'NAVD88'
+    else:
+        vdatum = 'MSL'
+
+    # Construct the filename
+    fname = 'adcirc_one_run_output_data_' +\
+            date + '_' + time_val + '_' +\
+            vdatum + '.' + ext
+
+    return fname
+
+
 def finish_prompt(status, date_file_fname, bad_dates_log, adcirc_file):
     """
     When the data is finished downloading, print out a message to the

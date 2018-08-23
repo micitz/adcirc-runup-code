@@ -26,7 +26,7 @@ date, use_gmt, use_navd88 = func.set_date()
 bad_dates_log_fname = 'bad_dates_log.txt'
 bad_dates_log = open(bad_dates_log_fname, 'a')
 
-date_file_fname = 'adcirc_one_run_output_data_(' + date + ').csv'
+date_file_fname = func.make_data_filename(date, use_gmt, use_navd88, ext='csv')
 with open(date_file_fname, 'w+') as adcirc_file:
     writer=csv.writer(adcirc_file, delimiter=',')
 
