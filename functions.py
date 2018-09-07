@@ -44,7 +44,7 @@ def intro_prompt():
     print('follow the prompts below:\r\n')
 
 
-def set_date():
+def set_date(known_node=False):
     """
     Have the user input the date and time to download data for
     """
@@ -58,9 +58,20 @@ def set_date():
     print('---------------------')
     use_gmt = bool(input('Use GMT (T) or EST (F): '))
     use_navd88 = bool(input('Use NAVD88 (T) or MSL (F): '))
-    print('---------------------\r\n')
 
-    return date, use_gmt, use_navd88
+    if known_node:
+        print('---------------------')
+        nodes_used = []
+        num_nodes = int(input('How many nodes to look at: '))
+        for i in range(num_nodes):
+            prompt = 'Enter node id ' + str(i+1) + ' of ' + str(num_nodes) + ': '
+            node = input(prompt)
+            nodes_used.append(int(node))    # Add 1 to match Python's indexing
+        print('---------------------\r\n')
+        return date, use_gmt, use_navd88, nodes_used
+    else:
+        print('---------------------\r\n')
+        return date, use_gmt, use_navd88
 
 
 def make_data_filename(date, gmt, navd, ext='csv'):
@@ -775,10 +786,10 @@ def download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writ
 
             # Print the current time step being worked on
             if use_gmt:
-                print('Currently working on nowcast time step %d of %d (Real time: %s GMT)' %
+                print('Currently working on forecast time step %d of %d (Real time: %s GMT)' %
                       (t + 1, len(time), real_time))
             else:
-                print('Currently working on nowcast time step %d of %d (Real time: %s EST)' %
+                print('Currently working on forecast time step %d of %d (Real time: %s EST)' %
                       (t + 1, len(time), real_time))
 
             # Download the appropriate Hs,TPS, depth values.
@@ -842,7 +853,7 @@ def download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writ
             for deep_node in deep_nodes_used:
 
                 # Convert the values to NAVD88 if desired
-                msl_to_navd88 = 0.118  # Meters
+                msl_to_navd88 = -0.112  # Meters
                 if use_navd88:
                     line.append(depth[deep_node] + msl_to_navd88)
                     line.append(elev[deep_node] + msl_to_navd88)
@@ -859,6 +870,102 @@ def download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writ
                     # Add new variable here as "line.append(___[node])"
                     line.append(x[deep_node])
                     line.append(y[deep_node])
+
+            writer.writerow(line)
+
+    elif status != 'good':
+        # Print the current date and status to the console
+        print('ERROR: Could not load date for %s\r\n' % date)
+        log_line = '\r\n' + date + '\tCould not load nowcast data'
+        bad_dates_log.write(log_line)
+        print('Date stored in bad_dates_log.txt\r\n')
+
+    # Clear the hour from the date string
+    # Return to: yyyymmdd
+    date = date[:-2]
+
+def download_nowcast_data_known_node(date, nodes_used, writer, bad_dates_log, use_gmt, use_navd88):
+    """
+    If a nowcast exists for the current date, this function will download
+    all the nowcast data first before the main program runs. This function
+    is essentially the main program with nowcast URLs.
+
+    Any variable in the main program that needs a "now" version is passed to
+    this function this way variable names could technically be shared without
+    causing an issue
+    """
+
+    # Download the data
+    hs_data, tp_data, z_data, status, grid = adcirc_full_nowcast_data_download(date)
+
+    if status == 'good':
+
+        x = hs_data['x']
+        y = hs_data['y']
+        time = hs_data['time']
+
+        # Setup the time
+        base_time_dt = get_model_base_time(hs_data)
+
+        # Loop through every time step and record the value of that
+        # variable at the current time
+        for t in range(len(time)):
+
+            # Calculate the "real" time from the model
+            real_time, real_time_str = get_real_time(base_time_dt, time[t], gmt=use_gmt)
+
+            # Print the current time step being worked on
+            if use_gmt:
+                print('Currently working on nowcast time step %d of %d (Real time: %s GMT)' %
+                      (t + 1, len(time), real_time))
+            else:
+                print('Currently working on nowcast time step %d of %d (Real time: %s EST)' %
+                      (t + 1, len(time), real_time))
+
+            # Grab data from the node
+            Hs, swan_TPS, depth, elev, X, Y = [], [], [], [], [], []
+            for node in nodes_used:
+                Hs.append(hs_data['swan_HS'][t][node])
+                swan_TPS.append(tp_data['swan_TPS'][t][node])
+                depth.append(hs_data['depth'][node])
+                elev.append(z_data['zeta'][t][node])
+                X.append(x[node])
+                Y.append(y[node])
+
+            # Every time step is one hour. Here, the date is adjusted
+            # using the dt.timedelta function by setting the "t" value
+            # being looped over to hours and then adding it to the date
+            # The date is briefly converted back into a datetime object
+            # to do this and then reconverted back into a string. The
+            # if-statement (if t != 0) makes sure that the time is correct
+            if t != 0:
+                time_step = dt.timedelta(hours=1)
+                date = dt.datetime.strptime(date, '%Y%m%d%H')
+                date += time_step
+                date = date.strftime('%Y%m%d%H')
+
+            line = []
+            line.append(real_time_str)
+            for node in range(len(nodes_used)):
+
+                # Convert the values to NAVD88 if desired
+                msl_to_navd88 = 0.118  # Meters
+                if use_navd88:
+                    line.append(depth[node] + msl_to_navd88)
+                    line.append(elev[node] + msl_to_navd88)
+                    line.append(Hs[node] + msl_to_navd88)
+                    line.append(swan_TPS[node])
+                    # Add new variable here as "line.append(___[node])"
+                    line.append(X[node])
+                    line.append(Y[node])
+                else:
+                    line.append(depth[node])
+                    line.append(elev[node])
+                    line.append(Hs[node])
+                    line.append(swan_TPS[node])
+                    # Add new variable here as "line.append(___[node])"
+                    line.append(X[node])
+                    line.append(Y[node])
 
             writer.writerow(line)
 
