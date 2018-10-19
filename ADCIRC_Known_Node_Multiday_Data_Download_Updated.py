@@ -2,7 +2,7 @@
 This script downloads ADCIRC+SWAN data from a specific node and date supplied
 by the user
 
-Michael Itzkin, 9/7/2018
+Michael Itzkin, 10/19/2018
 """
 
 import functions as func
