@@ -522,9 +522,6 @@ def adcirc_full_data_download(date):
             url_4 = '/hsofs/hatteras.renci.org/namhsofs/namforecast/fort.63.nc'
             grid = 'hsofs'
 
-    # Print out which grid is being used
-    print('Using %s grid for forecast data\n' % grid)
-
     tp_url = url_1 + date + url_3
     hs_url = url_1 + date + url_2
     z_url = url_1 + date + url_4
@@ -884,6 +881,7 @@ def download_nowcast_data(date, bottom_lat, upper_lat, left_lon, right_lon, writ
     # Return to: yyyymmdd
     date = date[:-2]
 
+
 def download_nowcast_data_known_node(date, nodes_used, writer, bad_dates_log, use_gmt, use_navd88):
     """
     If a nowcast exists for the current date, this function will download
@@ -980,3 +978,43 @@ def download_nowcast_data_known_node(date, nodes_used, writer, bad_dates_log, us
     # Return to: yyyymmdd
     date = date[:-2]
 
+
+def make_date_range():
+    """
+    Set the start and end date for the Known_Node_Multiday_Data_Download
+    file
+    """
+
+    # Enter the start date
+    Start_Year = input('Enter the start_year (YYYY): ')
+    Start_Month = input('Enter the start_month (do not include a leading 0): ')
+    Start_Day = input('Enter the start_date (do not include a leading 0): ')
+    Start_date_dt = dt.datetime(int(Start_Year), int(Start_Month), int(Start_Day))
+    Start_date = Start_date_dt.strftime('%Y%m%d')
+
+    print('\r\n')
+
+    # Enter the end date
+    End_Year = input('Enter the end_year (YYYY): ')
+    End_Month = input('Enter the end_month (do not include a leading 0): ')
+    End_Day = input('Enter the end_date (do not include a leading 0): ')
+    End_date_dt = dt.datetime(int(End_Year), int(End_Month), int(End_Day))
+    End_date = End_date_dt.strftime('%Y%m%d')
+
+    print('---------------------')
+
+    # Set the time zone and vertical datum
+    use_gmt = bool(input('Use GMT (T) or EST (F): '))
+    use_navd88 = bool(input('Use NAVD88 (T) or MSL (F): '))
+
+    # Enter the node IDs
+    print('---------------------')
+    nodes_used = []
+    num_nodes = int(input('How many nodes to look at: '))
+    for i in range(num_nodes):
+        prompt = 'Enter node ID ' + str(i + 1) + ' of ' + str(num_nodes) + ': '
+        node = input(prompt)
+        nodes_used.append(int(node))
+    print('---------------------\r\n')
+
+    return Start_date, Start_date_dt, End_date, End_date_dt, use_gmt, use_navd88, nodes_used
